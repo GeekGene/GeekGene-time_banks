@@ -1,0 +1,7 @@
+; $Id: time_banks.info,v 0.1 2010/09/22 13:02:34 jruberto Exp $
+name = Time Banks transaction engine 
+description = Provides transaction and account management services for Time Banks sites.
+package = Time Banks
+core = 6.x
+dependencies[] = content
+dependencies[] = mcapi

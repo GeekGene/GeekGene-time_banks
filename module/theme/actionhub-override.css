@@ -1,0 +1,13 @@
+
+form#support-page-form > div > a:first-child { 
+	background-color: #C00;
+	color: white;
+	padding: 8px;
+	float: right;
+	font-weight: bold;
+}
+#site-slogan {color: #104A91;
+	font-size: 250%;
+	position: relative;
+	top: 30px;
+}

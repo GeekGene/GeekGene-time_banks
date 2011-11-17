@@ -1,0 +1,792 @@
+<?php
+define ('HOURS_NID', 77);
+define ('EMAILIZE', 1);
+define ('NOEMAILIZE', 0);
+define ('PRIMARYCOORDINATORS', 'primary-coordinators');
+define ('COMMUNITY', 'community.timebanks.org');
+
+
+/**
+ * @file
+ * Time Banks transaction and account management services.
+ *
+ */
+
+/**
+ * Implementation of hook_hook_info()
+ */
+function time_banks_hook_info()
+{
+	return array(
+		'time_banks' => array(
+			'time_banks' => array(
+				'system_cron' => array(
+					'runs when' => t('Triggered by the system\'s cron service (i.e. not drupal\'s)'),
+					),
+				'system_init' => array(
+					'runs when' => t('Triggered once during druid site creation'),
+					),
+				),
+			),
+		);
+}
+
+function time_banks_system_cron()
+{
+	global $user;
+	$user = user_load(1);
+	$aids = _trigger_get_hook_aids('time_banks', 'system_cron');
+	$context = array(
+		'hook' => 'time_banks',
+		'op' => 'system_cron',
+		'user' => $user,
+		);
+	actions_do(array_keys($aids), $user, $context);
+    if( !function_exists('term_node_count_rebuild') )
+    {
+        module_load_include( 'inc', 'term_node_count',
+            'term_node_count.admin' );
+    }
+    term_node_count_rebuild();
+}
+
+//runs all actions attached to the system init trigger
+function time_banks_system_init( $shortName )
+{
+	variable_set('druid_shortname',$shortName);
+	variable_set('druid_url',$shortName.".timebanks.org");
+	global $user;
+	$user = user_load(1);
+	$aids = _trigger_get_hook_aids('time_banks', 'system_init');
+	$context = array(
+		'hook' => 'time_banks',
+		'op' => 'system_init',
+		'user' => $user,
+		);
+	actions_do(array_keys($aids), $user, $context);
+}
+
+//function that is called by the system init trigger
+function time_banks_init()
+{
+	//do actual system init stuff here, like setting email variables, etc...
+	$shortName = variable_get('druid_shortname','');
+
+	watchdog('info','tb_init: '.print_r($shortName,TRUE));
+}
+
+function time_banks_post_import_recalc()
+{
+	if( !function_exists('mc_balances_refresh') )
+	{
+		module_load_include( 'inc', 'mcapi', 'mcapi' );
+	}
+
+	if( !function_exists('term_node_count_rebuild') )
+	{
+		module_load_include( 'inc', 'term_node_count',
+			'term_node_count.admin' );
+	}
+
+	mc_balances_refresh();
+	term_node_count_rebuild();
+}
+
+function _time_banks_check_send_mail( $uid, $from, $subj, $body )
+{
+	$res = db_query( "SELECT cn.field_guardian_value AS is_guardian FROM users u INNER JOIN node n ON u.uid = n.uid INNER JOIN content_type_coord_notes cn ON cn.nid = n.nid WHERE u.uid = " . $uid );
+	if( $row = db_fetch_array($res) )
+	{
+		if( $row['is_guardian'] )
+		{
+			$dest_addr = variable_get( "time_banks_coord_email", "[not good]" );
+			if( $dest_addr == "[not good]" )
+			{
+				$dest_addr = "webmaster@geekgene.com";
+				variable_set( "time_banks_coord_email", $dest_addr );
+			}
+			mail( $dest_addr, $subj, $body, 
+				"From: " . $dest_addr . "\r\n" .
+				"Return-Path: <" . $dest_addr . ">\r\n" .
+				"Reply-To: " . $dest_addr . "\r\n"
+				);
+		}
+	}
+}
+
+function time_banks_nodeapi(&$node, $op, $a3 = NULL, $a4 = NULL)
+{
+	global $user;
+	switch( $op )
+	{
+	case "insert":
+	case "update":
+		if( $node->uid != $user->uid )
+			return;
+		$subj = "[Guardian Angel Notification] " . 
+			$user->name . " created " . $node->title;
+		$body = $subj . "\n\n" . "http://" . 
+			$_SERVER["SERVER_NAME"] . "/" . $node->path;
+		_time_banks_check_send_mail( 
+			$user->uid, $user->mail, $subj, $body );
+		//watchdog('error','tb_nodeapi'.print_r($node,TRUE));
+		break;
+	}
+}
+
+function time_banks_privatemsg_message_insert($message)
+{
+	_time_banks_check_send_mail(
+		$message['author']->uid, $message['author']->mail,
+		"[Guardian Angel Notification] " . $message['author']->name . " sent a message", 
+		$message['author']->name . " sent message:\r\nSubject: " . $message['subject'] . "\r\n" . $message['body'] );
+}
+
+function time_banks_help($path, $arg) {
+  $output = '';  //declare your output variable
+  switch ($path) {
+    case "admin/help#timebanks":
+      $output = '<p>'.  t("A bundle of custom features and functions for running a Time Bank.") .'</p>';
+      break;
+  }
+  return $output;
+}
+
+function time_banks_theme() {
+  $items = array(
+    'balance' => array(
+      'function' => 'theme_balance',
+      'arguments' => array(
+        'uid' => 0,
+      )
+    ),
+    'in_out' => array(
+      'function' => 'theme_in_out',
+      'arguments' => array(
+        'uid' => 0,
+      )
+    )
+  );
+  return $items;
+}
+
+function tb_show_balance($account) {
+  module_load_include('api.inc', mcapi);
+  $balances = mc_balances($account, HOURS_NID);
+  $callback = variable_get('timebanks_balance_display', 'balance');
+  return theme($callback, $balances);
+}
+	
+function theme_balance($balances) {
+  $output = '';
+  $bal = &$balances['cleared_balance'];
+  if($bal < 0) {
+    $output .= '<span style="color: red;">' . theme('money', $bal, HOURS_NID) . '</span>';
+  } else {
+    $output .= '<span>' . $bal . '</span>';
+  }
+  return $output;
+}
+function theme_in_out($balances) {
+  $output = '<span class="profile-balance-label">Earned: </span>';
+  $output .=  theme('money', $balances['gross_in'], HOURS_NID);
+  $output .= ' | ';
+  $output .= ' <span class="profile-balance-label">Spent: </span>';
+  $output .= theme('money', $balances['gross_out'], HOURS_NID);
+  return $output;
+}
+
+function time_banks_menu() {
+  $items = array(
+    'admin/mc/timebanks' => array(
+      'title' => 'Hours Accounting',
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array('choose_balance_callback'),
+      'access arguments' => array('administer site configuration'),
+      'type' => MENU_CALLBACK,
+      'weight' => -1
+    )
+  );
+  return $items;
+}
+
+function time_banks_menu_alter($items) {
+  unset($items['user/%user/bureau']);
+  unset($items['exchange/multiple/alltoone']);
+  unset($items['exchange/multiple/onetoall']);
+  unset($items['exchange/multiple']);
+  $items['exchange/onetomany'] = $items['exchange/multiple/onetomany'];
+  $items['exchange/manytoone'] = $items['exchange/multiple/manytoone'];
+  unset($items['exchange/multiple/manytoone']);
+  unset($items['exchange/multiple/onetomany']);
+  $items['exchange/3rdparty']['title'] = 'One-to-One';
+  $items['messages']['access callback'] = 'time_banks_message_access';
+}
+
+function choose_balance_callback() {
+  $form = array(
+    'timebanks_balance_display' => array(
+      '#title' => 'Balance displays',
+      '#type' => 'radios',
+      '#description' => 'Choose how you would like balances to be displayed',
+      '#options' => array(
+        'in_out' => 'Show earned and spent amounts separately',
+        'balance' => 'Show the combined balance'
+      ),
+      '#default_value' => variable_get('timebanks_balance_display', 'balance')
+    )
+  );
+  return system_settings_form($form);
+}
+
+function time_banks_service() {
+	return array(
+		array(
+			'#method'			=> 'member.list',
+			'#callback'			=> '_time_banks_service_member_list',
+			'#access arguments'	=> array('create transaction'),
+			'#args'				=> array(),
+			'#return'			=> 'array',
+			'#help'				=> t('List the timebank members.'),
+		),
+		array(
+			'#method'			=> 'member.get',
+			'#callback'			=> '_time_banks_service_member_get',
+			'#access arguments'	=> array('create transaction'),
+			'#args'				=> array(
+				array(
+					'#name'		=> 'member_id',
+					'#type'		=> 'int',
+					'#description'	=> t('MemberId'),
+					),
+				),
+			'#return'			=> 'array',
+			'#help'				=> t('Get a timebank member.'),
+		),
+		array(
+			'#method'			=> 'servicead.list',
+			'#callback'			=> '_time_banks_service_servicead_list',
+			'#access arguments'	=> array('create transaction'),
+			'#args'				=> array(),
+			'#return'			=> 'array',
+			'#help'				=> t('List the service ads.'),
+		),
+		array(
+			'#method'			=> 'servicead.get',
+			'#callback'			=> '_time_banks_service_servicead_get',
+			'#access arguments'	=> array('create transaction'),
+			'#args'				=> array(
+				array(
+					'#name'		=> 'ad_id',
+					'#type'		=> 'int',
+					'#description'	=> t('ServiceAdId'),
+					),
+				),
+			'#return'			=> 'array',
+			'#help'				=> t('Get a service ad.'),
+		),
+		array(
+			'#method'			=> 'transaction.list',
+			'#callback'			=> '_time_banks_service_transaction_list',
+			'#access arguments'	=> array('create transaction'),
+			'#args'				=> array(
+				array(
+					'#name'		=> 'member_id',
+					'#type'		=> 'int',
+					'#description'	=> t('MemberId'),
+					),
+				),
+			'#return'			=> 'array',
+			'#help'				=> t('List the transactions.'),
+		),
+		array(
+			'#method'			=> 'transaction.get',
+			'#callback'			=> '_time_banks_service_transaction_get',
+			'#access arguments'	=> array('create transaction'),
+			'#args'				=> array(
+				array(
+					'#name'		=> 'trans_id',
+					'#type'		=> 'int',
+					'#description'	=> t('Transaction Id'),
+					),
+				),
+			'#return'			=> 'array',
+			'#help'				=> t('Get a transaction.'),
+		),
+		array(
+			'#method'			=> 'transaction.create',
+			'#callback'			=> '_time_banks_service_transaction_create',
+			'#access arguments'	=> array('create transaction'),
+			'#args'				=> array(
+				array(
+					'#name'		=> 'provider',
+					'#type'		=> 'int',
+					'#description'	=> t('Provider'),
+					),
+				array(
+					'#name'		=> 'recipient',
+					'#type'		=> 'int',
+					'#description'	=> t('Recipient'),
+					),
+				array(
+					'#name'		=> 'category',
+					'#type'		=> 'int',
+					'#description'	=> t('Category'),
+					),
+				array(
+					'#name'		=> 'date',
+					'#type'		=> 'string',
+					'#description'	=> t('The date the service was peformed'),
+					),
+				array(
+					'#name'		=> 'desc',
+					'#type'		=> 'string',
+					'#description'	=> t('Description'),
+					),
+				array(
+					'#name'		=> 'hours',
+					'#type'		=> 'float',
+					'#description'	=> t('Hours spent'),
+					),
+				array(
+					'#name'		=> 'ad_id',
+					'#type'		=> 'int',
+					'#description'	=> t('Unique id of the ad'),
+					'#optional'	=> true
+					),
+			),
+			'#return'			=> 'int',
+			'#help'				=> t('Creates a transaction.'),
+			)
+		);
+}
+
+function _time_banks_service_member_list()
+{
+	$res = db_query( "SELECT u.uid FROM users u LEFT JOIN users_roles ur ON u.uid = ur.uid WHERE ur.rid = 4" );
+	$aOut = array();
+	while( $row = db_fetch_array($res) )
+	{
+		array_push($aOut, $row['uid']);
+	}
+
+	return $aOut;
+}
+
+function _time_banks_service_member_get($member_id)
+{
+	$res = db_query( "SELECT u.uid, u.name, u.mail, mc.cleared_balance FROM {users} u LEFT JOIN {mc_cache} mc ON u.uid = mc.uid WHERE u.uid = " . $member_id );
+	$aOut = array();
+	while( $row = db_fetch_array($res) )
+	{
+		$aOut['member_id'] = $row['uid'];
+		$aOut['name'] = $row['name'];
+		$aOut['mail'] = $row['mail'];
+		$aOut['balance'] = $row['cleared_balance'];
+	}
+
+	return $aOut;
+}
+
+function _time_banks_service_servicead_list()
+{
+	$res = db_query( "SELECT n.nid, n.title, nr.body FROM {node} n INNER JOIN {node_revisions} nr ON n.vid = nr.vid WHERE n.type='ad'" );
+	$aOut = array();
+	while( $row = db_fetch_array($res) )
+	{
+		array_push($aOut, $row['nid']);
+	}
+
+	return $aOut;
+}
+
+function _time_banks_service_servicead_get($ad_id)
+{
+	$res = db_query( "SELECT n.nid, n.title, nr.body FROM {node} n INNER JOIN {node_revisions} nr ON n.vid = nr.vid WHERE n.nid = " . $ad_id );
+	$aOut = array();
+	while( $row = db_fetch_array($res) )
+	{
+		$aOut['ad_id'] = $row['nid'];
+		$aOut['title'] = $row['title'];
+		$aOut['body'] = $row['body'];
+	}
+
+	return $aOut;
+}
+
+function _time_banks_service_transaction_list( $member_id )
+{
+	$res = db_query( "SELECT nid FROM {mc_exchanges} WHERE payer_uid=" . $member_id . " OR payee_uid=" . $member_id );
+	$aOut = array();
+	while( $row = db_fetch_array($res) )
+	{
+		array_push($aOut, $row['nid']);
+	}
+
+	return $aOut;
+}
+
+function _time_banks_service_transaction_get( $trans_id )
+{
+	$res = db_query( "SELECT nid, payer_uid, payee_uid, quantity FROM {mc_exchanges} WHERE nid=" . $trans_id );
+	$aLine = array();
+	while( $row = db_fetch_array($res) )
+	{
+		$aLine['trans_id'] = $row['nid'];
+		$aLine['provider'] = $row['payee_uid'];
+		$aLine['recipient'] = $row['payer_uid'];
+		$aLine['hours'] = $row['quantity'];
+	}
+
+	return $aLine;
+}
+
+function _time_banks_service_transaction_create( $provider, $recipient,
+	$category, $date, $desc, $hours, $ad_id=NULL ) {
+
+	drupal_set_message('Provider: ' . $provider . ', recipient: ' . $recipient);
+	
+	$node = new stdClass();
+	$node->type = 'transaction';
+	$node->title = 'new transaction';
+	$node->body = $desc;
+	$node->name = 'ggadmin';
+	$node->field_service_provider[0]['uid'] = $provider;
+	$node->field_service_recipient[0]['uid'] = $recipient;
+	$node->field_service_category_trans[0]['value'] = $category;
+	if( $ad_id != NULL )
+		$node->field_service_ad[0]['nid'] = $ad_id;
+	$node->field_hours[0]['value'] = $hours;
+	$node->field_service_date[0]['value'] = strtotime( $date );
+	$node->field_description[0]['value'] = $desc;
+	node_save( $node );
+
+	return $node->nid;
+}
+
+
+//adds the category to the prepopulated exchange form
+function time_banks_form_alter(&$form, $form_state, $form_id) {
+  switch($form_id) {
+    case 'mc_3rdparty_form':
+	  $form['buttons']['submit']['#value'] = t('Record an Exchange');
+      if (is_numeric(arg(3))) {
+        $node = node_load(arg(3));
+        $tids = array_keys($node->taxonomy);
+        //now we need to do something with javascript to set the defaults
+
+
+        unset($form['#field_info'][field_service_date]['widget']['label']);
+        //the #description is hidden in css because it hasn't been put in the form yet
+      }
+      break;
+    case 'manytoone_form':
+      drupal_set_title(t('Many-to-One'));
+	  drupal_set_message( 'This is an exchange where many people give hours to one person, from whom they received a service.<br /><br /> Example: Multiple members pay a neighbor for teaching a class to them.', 'warning' );
+      $form['quantity']['#title'] = t('Number of Hours');
+      $form['title']['#title'] = t('Description of Service');
+      $form['payer_uid_array']['#title'] = t('Members Receiving Service');
+      $form['payee_uid']['#title'] = t('Member Receiving Hours');
+      break;
+    case 'onetomany_form':
+      drupal_set_title(t('One-to-Many'));
+	  drupal_set_message( 'This is an exchange where one person gives hours to many people who provided a service.<br /><br /> Example: A TimeBank or Community Organization paying multiple volunteers for their pariticipation in an event.', 'warning' );
+      $form['quantity']['#title'] = t('Number of Hours');
+      $form['title']['#title'] = t('Description of Service');
+      $form['payer_uid']['#title'] = t('Member Receiving Service');
+      $form['payee_uid_array']['#title'] = t('Members Receiving Hours');
+	  break;
+    case 'cforge_report_form':
+	  $form['cforge_report']['#description'] = t('Be part of a wider network of local currency comunities by sharing one key piece of information with us - that this module is installed.  These stats motivate us and can be used to promote our work. We seek your trust and will not abuse this information.');
+	  break;
+    case 'views_bulk_operations_form__1':
+	  $form['from']['#attributes'] = array('class' => 'from-form');
+	  $form['to']['#attributes'] = array('class' => 'to-form');
+  }
+}
+
+
+
+// pulls emails out of db query array and stuffs into normal array
+function time_banks_fetch_emails ($result) {
+  $i=0;
+  while ($email = db_fetch_array($result)) {
+    $allEmails[$i] = $email[mail];  
+    $i++;    
+  }
+  return $allEmails;
+}
+
+
+// loops through array of email addresses, subscribes to listname
+function time_banks_list_subscribe($domain, $listname, $newMembers) {
+  if (empty($newMembers)){
+    return false;
+  }
+  foreach ($newMembers as $key => $value) {
+    try {
+      vqman_subscribe($domain,$listname,$value);  
+    }
+    catch( Exception $e ) {
+      $error = $e->getMessage();
+      watchdog( 'error', $error, NULL, WATCHDOG_ERROR, NULL );
+    }
+    if (empty($e)) {
+      $message = $value . ' subscribed to ' . $listname . '@' . $domain;
+      watchdog('time_banks', $message, NULL, WATCHDOG_INFO, NULL);
+    }
+  }
+}
+
+
+// sorts out supplied opt out email addresses from fullList
+function time_banks_remove_optout($optoutlist, &$fullList) {
+  if (empty($fullList)){
+    return false;
+  }
+  while ($anoptout = db_fetch_array($optoutlist)) {
+    foreach ($fullList as $key => $value) {
+      if ($value == $anoptout['mail']) {
+        unset($fullList[$key]);       
+      }
+    }
+  }
+}
+
+// get list of primary coordinators to use as email list moderators
+function time_banks_get_moderators() {
+  $modQuery = db_query('select u.mail from {users} u left join {users_roles} r on u.uid=r.uid where r.rid=8 and u.status=1'); 
+  return time_banks_fetch_emails($modQuery);
+}
+
+
+// creates new email list, can specify domain, footer, moderators or not
+function time_banks_addList($name, $domain) {
+  try {
+    vqman_addList($domain, $name); 
+  }
+  catch( Exception $e ) {      
+    $error = $e->getMessage();
+    watchdog( 'error', $error, NULL, WATCHDOG_ERROR, NULL );
+  }
+  if (empty($e)) {
+    $message = 'list ' . $name . '@' . $domain . ' created';
+    watchdog('time_banks', $message, NULL, WATCHDOG_INFO, NULL);
+  }
+}
+
+
+// delete all lists, recreate email lists, subscribe current users without opt out flag
+function time_banks_manage_lists() {
+  $domain = COMMUNITY;
+  $url = variable_get('druid_url','');
+  $pieces = explode(".", $url, 2);
+  $shortname = $pieces[0];
+  $value = $shortname . "-coordinators";
+  $moderators = time_banks_get_moderators(); 
+  try {
+    vqman_delList( $domain, $value );    
+  }
+  catch( Exception $e ) {
+    $error = $e->getMessage();
+    watchdog( 'error', $error, NULL, WATCHDOG_ERROR, NULL );
+  }
+  if (empty($e)) {
+    $message = 'list ' . $value . '@' . $domain . ' deleted';
+    watchdog('time_banks', $message, NULL, WATCHDOG_INFO, NULL);
+  }   
+   
+  //coordinators list
+  $result = db_query('select distinct u.mail from {users} u left join {users_roles} r on u.uid=r.uid where r.rid = 3 or r.rid = 8 or r.rid = 9 and u.status=1');
+  $newcoord = time_banks_fetch_emails($result);
+  $optout = db_query('select distinct u.mail from {users} u inner join {users_roles} r on u.uid=r.uid inner join {node} n on n.uid=u.uid inner join {content_type_coord_notes} c on n.nid = c.nid where (r.rid = 3 or r.rid = 8 or r.rid = 9) and c.field_broadcast_opt_out_value=1');
+  time_banks_remove_optout($optout, $newcoord);
+  time_banks_addList( $value, $domain);
+  time_banks_list_subscribe($domain, $value, $newcoord);
+  
+  // primary-coordinators alias
+  $alias = $shortname . '@' . $domain;
+  try {
+    vqman_delAlias( $alias ); 
+  }
+  catch( Exception $e ) {
+    $error = $e->getMessage();
+    watchdog( 'error', $error, NULL, WATCHDOG_ERROR, NULL );
+  }
+  if (empty($e)) {
+    $message = $alias . ' deleted';
+    watchdog('time_banks', $message, NULL, WATCHDOG_INFO, NULL);
+  }
+  foreach ($moderators as $key => $value) {
+    try {
+      vqman_addAlias( $alias, $value ); 
+    }
+    catch( Exception $e ) {
+      $error = $e->getMessage();
+      watchdog( 'error', $error, NULL, WATCHDOG_ERROR, NULL );
+    }
+    if (empty($e)) {
+      $message = $value . ' added to alias ' . $alias;
+      watchdog('time_banks', $message, NULL, WATCHDOG_INFO, NULL);
+    }
+  }   
+}
+
+
+// subscribes user to list if opt out is 0 or NULL
+function time_banks_user_subscribe($uid, $email, $name) {
+  $domain = COMMUNITY;
+  $url = variable_get('druid_url','');
+  $pieces = explode(".", $url, 2);
+  $shortname = $pieces[0];
+  $name = $shortname . "-" .  $name;
+  $result=db_result(db_query("SELECT field_broadcast_opt_out_value FROM {content_type_coord_notes} NATURAL JOIN {node} WHERE uid=%d AND type='coord_notes'", $uid));
+  if ((is_bool($result) and $result==FALSE) OR ($result==0) OR ($result==NULL)) {
+    try {
+      vqman_subscribe( $domain, $name, $email);   
+    }
+    catch( Exception $e ) {
+      $error = $e->getMessage();
+      watchdog( 'error', $error, NULL, WATCHDOG_ERROR, NULL );
+    }
+    if (empty($e)) {
+      $message = $email . ' subscribed to ' . $name . '@' . $domain;
+      watchdog('time_banks', $message, NULL, WATCHDOG_INFO, NULL);
+    }   
+  }    
+}
+
+// dummy function
+function time_banks_tax_subscription($nid, $uid, $email) {
+  return;
+}
+
+// return TRUE if expiration date is in future, FALSE if node is expired
+function time_banks_expire_test($nid) {
+  $result = db_result(db_query("SELECT expire FROM {node_expire} where nid=%d", $nid));
+  $date=time();
+  if ($result > time() ) {
+    return TRUE;
+  }
+  else {
+    return FALSE;
+  }
+}
+
+
+// update expired date
+function time_banks_expire_update($nid) {
+  db_query("UPDATE {node_expire} SET expired = '0' WHERE nid = '" . $nid . "' ");
+}
+
+/**
+ * Prints and formats languages specified in content_profile into view using supplied $data object
+*/
+function time_banks_print_languages($data) {
+  if ($data->node_data_field_profile_languages_field_profile_languages_value[0]['value'] != NULL) {
+    $field = content_fields('field_profile_languages', 'profile');
+	$languages = content_allowed_values($field);
+	print(t('Languages: '));
+	$i=0;
+	foreach ($data->node_data_field_profile_languages_field_profile_languages_value as $key => $value) {
+	  while (list ($key2, $value2)=each ($value)) {
+	    if ($i > 0) {
+		  print(', ');
+		}
+		print($languages[$value2]);
+		$i++;
+	  }
+    }
+  }
+}
+
+// prints help and support, languages, living situation, primary transportation using $data object from views to user profile
+function time_banks_print_additionalfields($data) {
+  if ($data->node_users_node_data_field_community_driving_field_community_driving_value == 1 || $data->node_users_node_data_field_community_driving_field_group_projects_value == 1) {
+    print('<label class="views-label-markup">Help and Support:</label><span class="field-content">');
+    if ($data->node_users_node_data_field_community_driving_field_community_driving_value == 1) {
+      print('<div class="field-item">I can help with Community Driving</div>');
+    }
+    if ($data->node_users_node_data_field_community_driving_field_group_projects_value == 1) {
+      print('<div class="field-item">I can help with Group Projects</div>');
+    }
+    print('</span>');
+  }
+  if ($data->node_data_field_profile_languages_field_profile_languages_value[0]['value'] != NULL) {
+    print('<label class="views-label-markup">Languages Used:</label><span class="field-content">');
+    $field = content_fields('field_profile_languages', 'profile');
+	$languages = content_allowed_values($field);
+	foreach ($data->node_data_field_profile_languages_field_profile_languages_value as $key => $value) {
+	  while (list ($key2, $value2)=each ($value)) {
+		print('<div class="field-item">' . $languages[$value2] . '</div>');
+	  }
+    }
+    print('</span>');
+  }
+  if ($data->node_data_field_live_with_field_live_with_value[0]['value'] != NULL  || $data->node_users_node_data_field_community_driving_field_my_home_value != NULL || $data->node_users_node_data_field_community_driving_field_stairs_value != NULL) {
+    print('<label class="views-label-markup">Living Situation:</label><span class="field-content">');
+    if ($data->node_users_node_data_field_community_driving_field_my_home_value != NULL) {
+      $field = content_fields('field_my_home', 'profile');
+      $homevalue = content_allowed_values($field);
+      $value = (int)$data->node_users_node_data_field_community_driving_field_my_home_value;
+      print('<div class="field-item">' . $homevalue[$value] . '</div>');    
+    }
+    if ($data->node_users_node_data_field_community_driving_field_stairs_value != NULL) {
+      $field = content_fields('field_stairs', 'profile');
+      $stairs = content_allowed_values($field);
+      $value = (int)$data->node_users_node_data_field_community_driving_field_stairs_value;
+      print('<div class="field-item">With ' . $stairs[$value] . '</div>');    
+    }
+    if ($data->node_data_field_live_with_field_live_with_value[0]['value'] != NULL) {
+      $field = content_fields('field_live_with', 'profile');
+      $livewith = content_allowed_values($field);
+      foreach ($data->node_data_field_live_with_field_live_with_value as $key => $value) {
+        while (list ($key2, $value2)=each ($value)) {
+          print('<div class="field-item">' . $livewith[$value2] . '</div>');
+        }
+      }
+    }
+    print('</span>');
+  }
+  if ($data->node_data_field_transportation_field_transportation_value[0]['value'] != NULL) {
+    print('<label class="views-label-markup">Primary Transportation:</label><span class="field-content">');
+    $field = content_fields('field_transportation', 'profile');
+    $transportation = content_allowed_values($field);
+    foreach ($data->node_data_field_transportation_field_transportation_value as $key => $value) {
+      while (list ($key2, $value2)=each ($value)) {
+        print('<div class="field-item">' . $transportation[$value2] . '</div>');
+      }
+    }
+    print('</span>');
+  }
+  if ($data->node_data_field_personal_links_field_personal_links_url[0]['url'] != NULL) {    
+    print('<label class="views-label-markup">Personal Links:</label><span class="field-content">');
+    foreach ($data->node_data_field_personal_links_field_personal_links_url as $key => $value) {
+      print('<div class="field-item">');
+      print('<a href="http://' . $data->node_data_field_personal_links_field_personal_links_url[$key]['url'] . '" target="_blank">' . $data->node_data_field_personal_links_field_personal_links_url[$key]['title'] . '</a>');
+      print('</div>');
+    }
+    print('</span>');
+  }
+}
+
+// use different permissions to access privatemsg inbox.  
+function time_banks_message_access($permission = 'read all private messages', $account = NULL) {  
+  if ( $account === NULL ) {
+    global $user;
+    $account = $user;
+  }
+  if (!$account->uid) { // Disallow anonymous access, regardless of permissions
+    return FALSE;
+  }
+  if ($account->uid == arg(1) OR (arg(1) == NULL)) { //allow if logged in user accessing their messages
+    return TRUE;
+  }  
+  if (arg(1) == 'me') {
+    return TRUE;
+  }
+  if (!user_access($permission, $account)) {
+    return FALSE;
+  }
+  return FLASE;
+}

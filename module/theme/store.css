@@ -1,0 +1,77 @@
+#header-group-inner-inner {
+  margin:-20px;
+  padding:0;
+  width:500px;
+}
+
+/* Hide availability text which is only included for search purposes. */
+.avail_cck_field_search { display: none; }
+
+#user-login-form .item-list ul { 
+	margin-left: 1.5em; 
+}
+.main-wrapper {
+	padding-top: 20px;
+}
+#preface-bottom {
+	float:right;
+	margin-bottom:-1em;
+	width:30%;
+} 
+#block-logintoboggan-0 {
+	margin-bottom: 0;
+}
+.postscript-bottom-wrapper {
+	padding-top: 20px;
+	margin-bottom: 0;
+}
+#block-block-4 {
+	margin-bottom: 1em;
+}
+#preface-top #block-menu-menu-quick-links ul.menu,
+#postscript-bottom #block-menu-secondary-links ul.menu,
+#postscript-bottom #block-menu-primary-links ul.menu {
+	text-align: right;
+}
+#preface-top #block-menu-menu-quick-links ul.menu a,
+#postscript-bottom #block-menu-secondary-links ul.menu a,
+#postscript-bottom #block-menu-primary-links ul.menu a{
+	text-decoration: none;
+}
+#preface-top #block-menu-menu-quick-links ul.menu a:hover,
+#postscript-bottom #block-menu-secondary-links ul.menu a:hover,
+#postscript-bottom #block-menu-primary-links ul.menu a:hover{
+	text-decoration: underline;
+}
+
+ul.menu li{ display:inline; }
+.pane-content ul.menu li { display: list-item; }
+#block-menu-menu-quick-links ul.menu li{ padding:0 0.5em; border-right:thin solid white; }
+#block-menu-menu-quick-links ul.menu li.last { border-right:none; }
+
+#mc-3rdparty-form .container-inline-date .description{display: none;}
+#mc-3rdparty-form .container-inline-date{margin:0;}
+#mc-3rdparty-form tbody{border:0;}
+
+/* Hide the EDIT links on user profiles by default */
+.profile-edit-links { display:none; }
+#user-profile-page #content-tabs { display:none; }
+
+/* Hide "More Help" links which people didn't have access to view results of. */
+.more-help-link {display:none;}
+
+/* Hide node expiration on all forms (service ads auto complete this via CCK field) */
+#edit-expire-wrapper { display:none; }
+
+/* Keep breadcrumbs from overlapping the logout button */
+#breadcrumbs { width: auto; }
+
+/* Need a little space around images in service ads */
+.node-type-ad .pane-content img {margin-left:10px; margin-right:10px; } 
+
+/* hide test exchange buttons */
+#onetomany-form #edit-preview { display: none; }
+#manytoone-form #edit-preview { display: none; }
+
+/* hide author for footer nodeblock */
+#node-619 .submitted {display: none}
