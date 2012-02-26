@@ -22,7 +22,8 @@ function time_banks_drush_command() {
 		'description'	=> 'Run the time_banks system init trigger.',
 		'aliases'		=> array('tb-init'),
 		'arguments'		=> array(
-			'shortname' => 'Short Name of the new site'
+			'shortname' => 'Short Name of the new site',
+			'timebankInit' => 'Base64 Serialized Php Array',
 			),
 		);
 	$items['time-banks-post-import-recalc'] = array(
@@ -40,8 +41,8 @@ function time_banks_drush_system_cron() {
 	drush_print("tb-cron successful.");
 }
 
-function time_banks_drush_system_init( $shortname='' ) {
-	time_banks_system_init( $shortname );
+function time_banks_drush_system_init( $shortname='', $timebankInit='' ) {
+	time_banks_system_initonce( $shortname, $timebankInit );
 	drush_print("tb-init successful.");
 }
 

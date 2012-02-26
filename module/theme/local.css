@@ -79,3 +79,7 @@ ul.menu li{ display:inline; }
 
 /* hide author for footer nodeblock */
 #node-619 .submitted {display: none}
+
+/* fix missing background and cutoff username autocomplete boxes on node/add/ad and exchange */
+#autocomplete {background: url("/sites/all/themes/acquia_marina/images/form-bg.png") repeat scroll 0 0 #F6F9FB;}
+.row, .nested, .block {overflow: visible;}

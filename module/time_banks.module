@@ -51,10 +51,17 @@ function time_banks_system_cron()
 }
 
 //runs all actions attached to the system init trigger
-function time_banks_system_init( $shortName )
+function time_banks_system_initonce( $shortName, $timebankInit )
 {
 	variable_set('druid_shortname',$shortName);
 	variable_set('druid_url',$shortName.".timebanks.org");
+
+	$tbInit = array();
+	try { $tbInit = unserialize( base64_decode( $timebankInit ) ); }
+	catch( Exception $e ){}
+
+	variable_set( 'druid_timebank_init', $tbInit );
+		
 	global $user;
 	$user = user_load(1);
 	$aids = _trigger_get_hook_aids('time_banks', 'system_init');
@@ -67,12 +74,65 @@ function time_banks_system_init( $shortName )
 }
 
 //function that is called by the system init trigger
-function time_banks_init()
+function time_banks_initonce()
 {
 	//do actual system init stuff here, like setting email variables, etc...
 	$shortName = variable_get('druid_shortname','');
+	$shortMail = $shortName . '@community.timebanks.org';
 
-	watchdog('info','tb_init: '.print_r($shortName,TRUE));
+	$tbInitData = variable_get('druid_timebank_init',array());
+	$siteName = $tbInitData['siteName'];
+	if( isset($tbInitData['contact']) && is_array(
+		$tbInitData['contact']) )
+	{
+		$contact = $tbInitData['contact'];
+		$contact['roles'][4] = 'Member';
+		if( isset($contact['roles'][6]) ) 
+		{
+			unset($contact['roles'][6]);  //unset awaiting email role if set
+		}
+		$contact['roles'][8] = 'TB Primary Coordinator';
+		$nc = user_save(null,$contact);
+		//reset password so it isn't double md5'd
+		db_query("UPDATE users SET pass='".$contact['pass'].
+			"' WHERE uid=".$nc->uid);
+		
+		// create user profile
+ 		$profile = new stdClass();
+		$profile->is_new = TRUE;
+		$profile->uid = $nc->uid;
+		$profile->name = $nc->name;
+		$profile->type = "profile";
+		$profile->status = 1;
+		$profile->field_firstname[]['value'] = "Primary";
+		$profile->field_lastname[]['value'] = "Coordinator";
+		if ($profile = node_submit($profile))
+		{
+			node_save($profile);
+		}
+	}
+	else
+	{
+		watchdog("error","tb_init:no contact:(set:".
+			isset($tbInitData['contact']).")(array:".
+			is_array($tbInitData['contact']).")");
+	}
+
+	variable_set('site_name',$siteName);
+	variable_set('site_mail',$shortMail);
+	variable_set('user_register_notify_mailto',$shortMail);
+	variable_set('time_banks_coord_email',$shortMail);
+	variable_set('views_send_from_mail_broadcast_email:page_1',$shortMail);
+	variable_set('views_send_from_name_broadcast_email:page_1',$shortName);	
+	variable_set('file_directory_path',"sites/" . $shortName . ".timebanks.org/files");
+	db_query("UPDATE {contact} SET recipients = '%s' where cid=1", $shortMail);
+	time_banks_manage_lists();
+	cache_clear_all(); //this one only flushes block and page
+	cache_clear_all(NULL,'cache'); //this and next one for avatar images
+	cache_clear_all(NULL, 'cache_content');
+	drupal_flush_all_caches();
+	//watchdog('info','tb_init: '.print_r($shortName,TRUE).':'.
+	//	print_r($contact,TRUE));
 }
 
 function time_banks_post_import_recalc()
@@ -782,11 +842,14 @@ function time_banks_message_access($permission = 'read all private messages', $a
   if ($account->uid == arg(1) OR (arg(1) == NULL)) { //allow if logged in user accessing their messages
     return TRUE;
   }  
-  if (arg(1) == 'me') {
+  if (arg(1) == 'me' OR arg(1) == 'new') {
     return TRUE;
+  }
+  if (arg(0) != 'messages') {
+	  return TRUE;
   }
   if (!user_access($permission, $account)) {
     return FALSE;
   }
-  return FLASE;
+  return TRUE;
 }
